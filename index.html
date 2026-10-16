@@ -26,7 +26,6 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       overflow: hidden; display: flex; flex-direction: column;
     }
-    /* Верхняя панель */
     header {
       background: var(--panel);
       border-bottom: 1px solid var(--border);
@@ -60,12 +59,11 @@
     button.warn { background: var(--warn); color: #0f172a; border-color: var(--warn); }
     button.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
 
-    /* Информационная строка (статус геометрии) */
     #status-bar {
-      background: rgba(30, 41, 59, 0.9);
+      background: rgba(30, 41, 59, 0.95);
       border-bottom: 1px solid var(--border);
       padding: 6px 12px; font-size: 12px;
-      display: flex; justify-content: space-between; align-items: center;
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
       z-index: 9;
     }
     .badge {
@@ -73,24 +71,33 @@
     }
     .badge-warn { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #f59e0b; }
     .badge-ok { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid #22c55e; }
+    .badge-err { background: rgba(239, 68, 68, 0.25); color: #fca5a5; border: 1px solid #ef4444; }
 
-    /* Рабочая область Canvas */
+    #alert-banner {
+      display: none;
+      background: rgba(153, 27, 27, 0.95);
+      border-bottom: 1px solid #ef4444;
+      color: #fecaca;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      z-index: 9;
+    }
+
     #canvas-wrap {
       flex: 1; position: relative; overflow: hidden;
       touch-action: none;
     }
     canvas { width: 100%; height: 100%; display: block; }
 
-    /* Плавающая подсказка */
     #hint-box {
       position: absolute; top: 10px; left: 12px; right: 12px;
       background: rgba(15, 23, 42, 0.85);
       border: 1px solid var(--border); border-radius: 8px;
-      padding: 8px 12px; font-size: 13px; color: #e2e8f0;
+      padding: 8px 12px; font-size: 12px; color: #e2e8f0;
       pointer-events: none; backdrop-filter: blur(4px);
     }
 
-    /* Нижняя панель инструментов */
     footer {
       background: var(--panel);
       border-top: 1px solid var(--border);
@@ -103,7 +110,6 @@
     }
     .toolbar-row button { flex: 1; text-align: center; padding: 9px 6px; }
 
-    /* Модальное окно ввода размера */
     #modal-overlay {
       position: fixed; inset: 0; background: rgba(0,0,0,0.65);
       display: none; align-items: center; justify-content: center;
@@ -111,18 +117,23 @@
     }
     .modal {
       background: var(--panel); border: 1px solid var(--border);
-      border-radius: 12px; width: 100%; max-width: 340px;
-      padding: 16px; display: flex; flex-direction: column; gap: 12px;
+      border-radius: 12px; width: 100%; max-width: 350px;
+      padding: 16px; display: flex; flex-direction: column; gap: 10px;
       box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);
     }
     .modal h3 { margin: 0; font-size: 16px; }
     .modal p { margin: 0; font-size: 13px; color: var(--muted); }
+    .modal-error {
+      display: none; background: rgba(239, 68, 68, 0.18);
+      border: 1px solid #ef4444; color: #fca5a5;
+      padding: 8px 10px; border-radius: 6px; font-size: 12px; font-weight: 600;
+    }
     .modal input {
       width: 100%; padding: 10px 12px; font-size: 18px; font-weight: bold;
       background: #0f172a; border: 1px solid var(--accent); color: #fff;
       border-radius: 8px; text-align: center;
     }
-    .modal-actions { display: flex; gap: 8px; }
+    .modal-actions { display: flex; gap: 8px; margin-top: 4px; }
     .modal-actions button { flex: 1; padding: 10px; }
   </style>
 </head>
@@ -138,8 +149,10 @@
 
 <div id="status-bar">
   <div id="geom-status">Начните рисовать контур</div>
-  <div id="error-metric">Невязка: 0 мм</div>
+  <div id="error-metric">Макс. невязка: 0 мм</div>
 </div>
+
+<div id="alert-banner"></div>
 
 <div id="canvas-wrap">
   <canvas id="cad-canvas"></canvas>
@@ -149,8 +162,8 @@
 <footer>
   <div class="toolbar-row" id="mode-buttons">
     <button id="btn-draw" class="primary" onclick="setMode('draw')">1. Контур</button>
-    <button id="btn-measure" onclick="setMode('measure')">2. Стены / Диаг.</button>
-    <button id="btn-solve" class="warn" onclick="solveCurrentRoom()">3. Уравнять</button>
+    <button id="btn-measure" onclick="setMode('measure')">2. Размеры</button>
+    <button id="btn-solve" class="warn" onclick="solveCurrentRoom(true)">3. Пересчёт</button>
     <button id="btn-attach" onclick="startAttachRoom()">+ Комната</button>
   </div>
   <div class="toolbar-row">
@@ -165,6 +178,7 @@
   <div class="modal">
     <h3 id="modal-title">Размер в миллиметрах</h3>
     <p id="modal-desc">Введите измеренное значение (мм):</p>
+    <div id="modal-error" class="modal-error"></div>
     <input type="number" id="modal-input" inputmode="decimal" placeholder="Например: 4250">
     <div class="modal-actions">
       <button onclick="closeModal()">Отмена</button>
@@ -174,49 +188,48 @@
 </div>
 
 <script>
-/**
- * ГЛОБАЛЬНОЕ СОСТОЯНИЕ ПРОЕКТА
- * Единицы в модели: миллиметры (мм). При черновой отрисовке 1 пиксель = 10 мм по умолчанию.
- */
+const TOLERANCE_MM = 10.0; // Допуск на невязку +-10 мм
+
 let state = {
   rooms: [
     {
       id: 1,
       name: "Пом. 1",
       pts: [],          // [{x, y, fixed: false}] в мм
+      sketchAngles: [], // Исходные углы чернового контура для сохранения формы при неполных диагоналях
       closed: false,
-      walls: {},        // ключ "i-j" (по возрастанию индекса): длина в мм
-      diags: {}         // ключ "i-j": длина в мм
+      walls: {},        // "i-j": измеренная длина в мм
+      diags: {}         // "i-j": измеренная длина в мм
     }
   ],
   activeRoomIdx: 0,
-  mode: 'draw',         // 'draw' | 'measure' | 'select_wall_for_room'
-  selectedVertex: null, // индекс выбранной вершины для диагонали
-  recommendedDiag: null,// [i, j] рекомендуемая диагональ
-  lastResidual: 0       // среднеквадратичная невязка (мм)
+  mode: 'draw',
+  selectedVertex: null,
+  recommendedDiag: null,
+  maxAbsError: 0,
+  badEdges: {}          // "i-j": delta (для подсветки красным при |delta| > 10 мм)
 };
 
-// Параметры камеры (панорамирование и зум)
 let cam = {
   x: window.innerWidth / 2,
   y: window.innerHeight / 2,
-  scale: 0.08 // 1 мм = 0.08 px (т.е. 1 метр = 80 пикселей)
+  scale: 0.08
 };
 
 const canvas = document.getElementById('cad-canvas');
 const ctx = canvas.getContext('2d');
 
-// Загрузка из LocalStorage
 function loadState() {
-  const saved = localStorage.getItem('cad_survey_state_v1');
+  const saved = localStorage.getItem('cad_survey_state_v2');
   if (saved) {
     try {
       state = JSON.parse(saved);
+      if (!state.badEdges) state.badEdges = {};
     } catch (e) { console.error(e); }
   }
 }
 function saveState() {
-  localStorage.setItem('cad_survey_state_v1', JSON.stringify(state));
+  localStorage.setItem('cad_survey_state_v2', JSON.stringify(state));
 }
 
 function activeRoom() {
@@ -231,21 +244,13 @@ function dist(p1, p2) {
   return Math.hypot(p1.x - p2.x, p1.y - p2.y);
 }
 
-// Перевод координат экрана в мировые (мм) и обратно
 function screenToWorld(sx, sy) {
-  return {
-    x: (sx - cam.x) / cam.scale,
-    y: (sy - cam.y) / cam.scale
-  };
+  return { x: (sx - cam.x) / cam.scale, y: (sy - cam.y) / cam.scale };
 }
 function worldToScreen(wx, wy) {
-  return {
-    x: wx * cam.scale + cam.x,
-    y: wy * cam.scale + cam.y
-  };
+  return { x: wx * cam.scale + cam.x, y: wy * cam.scale + cam.y };
 }
 
-// Настройка размеров холста
 function resizeCanvas() {
   const rect = canvas.parentElement.getBoundingClientRect();
   canvas.width = rect.width * window.devicePixelRatio;
@@ -255,7 +260,7 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 
-// =================== УПРАВЛЕНИЕ РЕЖИМАМИ И ВКЛАДКАМИ ===================
+// =================== ВКЛАДКИ И РЕЖИМЫ ===================
 
 function renderTabs() {
   const container = document.getElementById('room-tabs');
@@ -269,6 +274,7 @@ function renderTabs() {
       state.selectedVertex = null;
       setMode(activeRoom().closed ? 'measure' : 'draw');
       renderTabs();
+      evaluateRoomErrors(activeRoom());
       updateStatus();
       render();
     };
@@ -285,15 +291,13 @@ function setMode(m) {
 
   const r = activeRoom();
   if (m === 'draw') {
-    if (r.closed) {
-      hint.textContent = "Контур замкнут. Перейдите в режим «2. Стены / Диаг.» для ввода размеров.";
-    } else {
-      hint.textContent = "Тапайте по холсту для добавления углов комнаты. Нажмите «Замкнуть контур», когда закончите.";
-    }
+    hint.textContent = r.closed
+      ? "Контур замкнут. Перейдите в «2. Размеры» для ввода промеров стен и диагоналей."
+      : "Тапайте по экрану для добавления углов. Для замыкания нажмите «Замкнуть контур» или тапните в точку 1.";
   } else if (m === 'measure') {
-    hint.textContent = "Тапните на СТЕНУ, чтобы ввести её длину, или последовательно на ДВА УГЛА, чтобы задать диагональ.";
+    hint.textContent = "Тапните на СТЕНУ для ввода её длины, или последовательно на ДВА УГЛА для ввода диагонали.";
   } else if (m === 'select_wall_for_room') {
-    hint.textContent = "Тапните на стену текущего помещения, за которой находится следующая комната.";
+    hint.textContent = "Тапните на общую стену текущего помещения, за которой находится следующая комната.";
   }
   updateStatus();
   render();
@@ -304,7 +308,7 @@ function undoPoint() {
   if (!r.closed && r.pts.length > 0) {
     const last = r.pts[r.pts.length - 1];
     if (last.fixed) {
-      alert("Эта точка принадлежит общей стене со смежной комнатой и зафиксирована.");
+      alert("Точка зафиксирована от смежной комнаты.");
       return;
     }
     r.pts.pop();
@@ -326,23 +330,41 @@ function closePolygon() {
     return;
   }
   r.closed = true;
-  // Инициализируем черновые размеры стен по нарисованному масштабу, если не заданы
+  // Сохраняем черновые внутренние углы поворота для удержания формы пока нет диагоналей
+  saveSketchAngles(r);
   setMode('measure');
   saveState();
   updateStatus();
   render();
 }
 
+function saveSketchAngles(r) {
+  const N = r.pts.length;
+  r.sketchAngles = [];
+  for (let i = 0; i < N; i++) {
+    const prev = r.pts[(i - 1 + N) % N];
+    const curr = r.pts[i];
+    const next = r.pts[(i + 1) % N];
+    const a1 = Math.atan2(curr.y - prev.y, curr.x - prev.x);
+    const a2 = Math.atan2(next.y - curr.y, next.x - curr.x);
+    let turn = a2 - a1;
+    while (turn <= -Math.PI) turn += 2 * Math.PI;
+    while (turn > Math.PI) turn -= 2 * Math.PI;
+    r.sketchAngles.push(turn);
+  }
+}
+
 function clearAllProject() {
   if (!confirm("Очистить весь проект и начать заново?")) return;
-  localStorage.removeItem('cad_survey_state_v1');
+  localStorage.removeItem('cad_survey_state_v2');
   state = {
-    rooms: [{ id: 1, name: "Пом. 1", pts: [], closed: false, walls: {}, diags: {} }],
+    rooms: [{ id: 1, name: "Пом. 1", pts: [], sketchAngles: [], closed: false, walls: {}, diags: {} }],
     activeRoomIdx: 0,
     mode: 'draw',
     selectedVertex: null,
     recommendedDiag: null,
-    lastResidual: 0
+    maxAbsError: 0,
+    badEdges: {}
   };
   resetView();
   renderTabs();
@@ -367,29 +389,295 @@ function resetView() {
     });
     const w = Math.max(maxX - minX, 2000);
     const h = Math.max(maxY - minY, 2000);
-    cam.scale = Math.min((rect.width * 0.75) / w, (rect.height * 0.75) / h);
+    cam.scale = Math.min((rect.width * 0.72) / w, (rect.height * 0.72) / h);
     cam.x = rect.width / 2 - ((minX + maxX) / 2) * cam.scale;
     cam.y = rect.height / 2 - ((minY + maxY) / 2) * cam.scale;
   }
   render();
 }
 
-// =================== АНАЛИЗ СТЕПЕНЕЙ СВОБОДЫ И ПОДСКАЗКА ДИАГОНАЛЕЙ ===================
+// =================== ГЕОМЕТРИЧЕСКИЙ ВАЛИДАТОР (ПРОВЕРКА НЕВЕРНЫХ РАЗМЕРОВ) ===================
+
+/**
+ * Проверяет, не нарушает ли вводимый размер L между вершинами (u, v)
+ * фундаментальные геометрические законы (неравенство треугольника и замкнутого полигона)
+ * с запасом допуска TOLERANCE_MM (10 мм).
+ */
+function validateMeasurement(r, u, v, newL) {
+  const N = r.pts.length;
+  const targetKey = edgeKey(u, v);
+
+  // Собираем матрицу известных расстояний (только введенные пользователем размеры)
+  const known = {};
+  Object.keys(r.walls).forEach(k => known[k] = r.walls[k]);
+  Object.keys(r.diags).forEach(k => known[k] = r.diags[k]);
+  known[targetKey] = newL;
+
+  // 1. Проверка для каждого явно образованного треугольника (i, j, m), где все 3 стороны измерены
+  for (let i = 0; i < N; i++) {
+    for (let j = i + 1; j < N; j++) {
+      for (let m = j + 1; m < N; m++) {
+        const d1 = known[edgeKey(i, j)];
+        const d2 = known[edgeKey(j, m)];
+        const d3 = known[edgeKey(i, m)];
+        if (d1 !== undefined && d2 !== undefined && d3 !== undefined) {
+          const maxSide = Math.max(d1, d2, d3);
+          const sumOther = d1 + d2 + d3 - maxSide;
+          // Неравенство треугольника: самая длинная сторона должна быть строго меньше суммы двух других
+          if (maxSide >= sumOther + TOLERANCE_MM) {
+            return `Невозможный треугольник углов (${i+1}-${j+1}-${m+1}): сторона ${maxSide} мм больше или равна сумме двух других (${sumOther} мм)! Проверьте замер.`;
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Проверка замкнутого периметра (если все N стен измерены)
+  let allWallsKnown = true;
+  let wallLengths = [];
+  for (let i = 0; i < N; i++) {
+    const wL = known[edgeKey(i, (i + 1) % N)];
+    if (wL === undefined) { allWallsKnown = false; break; }
+    wallLengths.push({ idx1: i + 1, idx2: ((i + 1) % N) + 1, L: wL });
+  }
+  if (allWallsKnown) {
+    const maxWall = wallLengths.reduce((a, b) => a.L > b.L ? a : b);
+    const sumOthers = wallLengths.reduce((acc, w) => acc + w.L, 0) - maxWall.L;
+    if (maxWall.L >= sumOthers + TOLERANCE_MM) {
+      return `Ошибка периметра: стена ${maxWall.idx1}-${maxWall.idx2} (${maxWall.L} мм) длиннее суммы всех остальных стен помещения (${sumOthers} мм)!`;
+    }
+  }
+
+  // 3. Проверка диагонали относительно цепочки стен по обоим путям обхода полигона
+  const isWall = (Math.abs(u - v) === 1) || (u === 0 && v === N - 1) || (v === 0 && u === N - 1);
+  if (!isWall) {
+    // Путь 1: от u к v по часовой
+    let path1Complete = true, sum1 = 0;
+    for (let curr = u; curr !== v; curr = (curr + 1) % N) {
+      const next = (curr + 1) % N;
+      const w = known[edgeKey(curr, next)];
+      if (w === undefined) { path1Complete = false; break; }
+      sum1 += w;
+    }
+    if (path1Complete && newL >= sum1 + TOLERANCE_MM) {
+      return `Диагональ ${u+1}-${v+1} (${newL} мм) не может быть длиннее суммы обходящих её стен (${sum1} мм)!`;
+    }
+
+    // Путь 2: от v к u
+    let path2Complete = true, sum2 = 0;
+    for (let curr = v; curr !== u; curr = (curr + 1) % N) {
+      const next = (curr + 1) % N;
+      const w = known[edgeKey(curr, next)];
+      if (w === undefined) { path2Complete = false; break; }
+      sum2 += w;
+    }
+    if (path2Complete && newL >= sum2 + TOLERANCE_MM) {
+      return `Диагональ ${u+1}-${v+1} (${newL} мм) не может быть длиннее суммы обходящих её стен (${sum2} мм)!`;
+    }
+  }
+
+  return null; // Ошибок нет
+}
+
+// =================== МАТЕМАТИЧЕСКИЙ РЕШАТЕЛЬ (ВАРИАНТ Б + ДОПУСК +-10 ММ) ===================
+
+function solveCurrentRoom(centerAfter = false) {
+  const r = activeRoom();
+  const N = r.pts.length;
+  if (!r.closed || N < 3) return;
+
+  // 1. Если введены только стены (или часть стен) и нет диагоналей — сначала масштабируем и выстраиваем длины стен
+  const measuredWallKeys = Object.keys(r.walls);
+  const measuredDiagKeys = Object.keys(r.diags);
+
+  if (measuredWallKeys.length === 0 && measuredDiagKeys.length === 0) return;
+
+  const hasFixed = r.pts.some(p => p.fixed);
+
+  // Предварительное приведение масштаба чернового контура к реальным миллиметрам
+  if (!hasFixed) {
+    let sumScale = 0, cntScale = 0;
+    measuredWallKeys.forEach(k => {
+      const [i, j] = k.split('-').map(Number);
+      const d = dist(r.pts[i], r.pts[j]);
+      if (d > 1) { sumScale += r.walls[k] / d; cntScale++; }
+    });
+    measuredDiagKeys.forEach(k => {
+      const [i, j] = k.split('-').map(Number);
+      const d = dist(r.pts[i], r.pts[j]);
+      if (d > 1) { sumScale += r.diags[k] / d; cntScale++; }
+    });
+
+    if (cntScale > 0) {
+      const ratio = sumScale / cntScale;
+      if (Math.abs(ratio - 1.0) > 0.05) {
+        const cx = r.pts[0].x, cy = r.pts[0].y;
+        for (let i = 0; i < N; i++) {
+          r.pts[i].x = cx + (r.pts[i].x - cx) * ratio;
+          r.pts[i].y = cy + (r.pts[i].y - cy) * ratio;
+        }
+      }
+    }
+  }
+
+  // Формируем список жестких связей (стены + диагонали)
+  // Вариант Б: веса обратно пропорциональны длине (упругая деформация стержней), при этом стены имеют базовый приоритет 1.5x
+  const constraints = [];
+  for (let i = 0; i < N; i++) {
+    const j = (i + 1) % N;
+    const k = edgeKey(i, j);
+    if (r.walls[k] !== undefined) {
+      constraints.push({ i, j, L: r.walls[k], stiff: 1.5, isWall: true, key: k });
+    } else {
+      // Неизмеренная стена — слабое удержание текущей длины, чтобы контур не схлопывался
+      constraints.push({ i, j, L: dist(r.pts[i], r.pts[j]), stiff: 0.02, isWall: false, key: k });
+    }
+  }
+
+  measuredDiagKeys.forEach(k => {
+    const [i, j] = k.split('-').map(Number);
+    if (i < N && j < N) {
+      constraints.push({ i, j, L: r.diags[k], stiff: 1.0, isWall: false, key: k });
+    }
+  });
+
+  // Если диагоналей еще недостаточно (< N - 3), добавляем мягкие угловые распорки по черновым углам,
+  // чтобы стены при вводе сразу меняли свою длину в масштабе, не ломая форму комнаты!
+  const reqDiags = Math.max(0, N - 3);
+  if (measuredDiagKeys.length < reqDiags) {
+    for (let i = 0; i < N; i++) {
+      const prev = (i - 1 + N) % N;
+      const next = (i + 1) % N;
+      const k = edgeKey(prev, next);
+      if (r.diags[k] === undefined && N > 3) {
+        const L1 = r.walls[edgeKey(prev, i)] || dist(r.pts[prev], r.pts[i]);
+        const L2 = r.walls[edgeKey(i, next)] || dist(r.pts[i], r.pts[next]);
+        const turn = (r.sketchAngles && r.sketchAngles[i] !== undefined) ? r.sketchAngles[i] : Math.PI / 2;
+        const interiorAngle = Math.PI - Math.abs(turn);
+        const softDiag = Math.sqrt(Math.max(100, L1*L1 + L2*L2 - 2*L1*L2*Math.cos(interiorAngle)));
+        constraints.push({ i: prev, j: next, L: softDiag, stiff: 0.04, isWall: false, key: k, soft: true });
+      }
+    }
+  }
+
+  // Якоря фиксации положения в пространстве
+  let anchor0 = -1, anchor1 = -1, dirAngle = 0;
+  if (!hasFixed) {
+    anchor0 = 0;
+    anchor1 = 1;
+    dirAngle = Math.atan2(r.pts[1].y - r.pts[0].y, r.pts[1].x - r.pts[0].x);
+    const snapAngles = [0, Math.PI/2, Math.PI, -Math.PI, -Math.PI/2];
+    for (let sa of snapAngles) {
+      if (Math.abs(dirAngle - sa) < 0.22) { dirAngle = sa; break; }
+    }
+  }
+  const p0Orig = anchor0 !== -1 ? { x: r.pts[0].x, y: r.pts[0].y } : null;
+
+  // Итерационный решатель нелинейной системы МНК (Гаусс-Зейдель по связям с демпфированием)
+  const totalIters = 5000;
+  for (let iter = 0; iter < totalIters; iter++) {
+    const damp = 0.45 * (1 - iter / (totalIters * 1.05));
+
+    for (let c of constraints) {
+      const pA = r.pts[c.i];
+      const pB = r.pts[c.j];
+      const vx = pB.x - pA.x;
+      const vy = pB.y - pA.y;
+      const curD = Math.hypot(vx, vy) || 1e-6;
+      const err = curD - c.L;
+
+      const ux = vx / curD;
+      const uy = vy / curD;
+
+      const fixA = pA.fixed || c.i === anchor0;
+      const fixB = pB.fixed || c.j === anchor0;
+
+      const corr = err * c.stiff * damp;
+
+      if (!fixA && !fixB) {
+        pA.x += ux * corr * 0.5;
+        pA.y += uy * corr * 0.5;
+        pB.x -= ux * corr * 0.5;
+        pB.y -= uy * corr * 0.5;
+      } else if (fixA && !fixB) {
+        pB.x -= ux * corr;
+        pB.y -= uy * corr;
+      } else if (!fixA && fixB) {
+        pA.x += ux * corr;
+        pA.y += uy * corr;
+      }
+    }
+
+    // Удерживаем базовый луч 0->1 от вращения
+    if (anchor1 === 1 && !r.pts[1].fixed) {
+      const d01 = dist(r.pts[0], r.pts[1]);
+      r.pts[1].x = r.pts[0].x + Math.cos(dirAngle) * d01;
+      r.pts[1].y = r.pts[0].y + Math.sin(dirAngle) * d01;
+    }
+    if (p0Orig) {
+      r.pts[0].x = p0Orig.x;
+      r.pts[0].y = p0Orig.y;
+    }
+  }
+
+  evaluateRoomErrors(r);
+  saveState();
+  if (centerAfter) resetView();
+  updateStatus();
+  render();
+}
+
+// Расчет фактических отклонений (дельт) на всех измеренных стенах и диагоналях
+function evaluateRoomErrors(r) {
+  state.badEdges = {};
+  state.maxAbsError = 0;
+  const N = r.pts.length;
+  if (!r.closed || N < 3) return;
+
+  const checkEdge = (i, j, targetL, labelPrefix) => {
+    const k = edgeKey(i, j);
+    const actualL = dist(r.pts[i], r.pts[j]);
+    const delta = actualL - targetL; // + значит растянулось, - значит сжалось
+    const absD = Math.abs(delta);
+    if (absD > state.maxAbsError) state.maxAbsError = absD;
+    if (absD > TOLERANCE_MM) {
+      state.badEdges[k] = {
+        delta: delta,
+        actual: Math.round(actualL),
+        target: targetL,
+        name: `${labelPrefix} ${i+1}-${j+1}`
+      };
+    }
+  };
+
+  Object.keys(r.walls).forEach(k => {
+    const [i, j] = k.split('-').map(Number);
+    if (i < N && j < N) checkEdge(i, j, r.walls[k], "Стена");
+  });
+
+  Object.keys(r.diags).forEach(k => {
+    const [i, j] = k.split('-').map(Number);
+    if (i < N && j < N) checkEdge(i, j, r.diags[k], "Диаг.");
+  });
+}
+
+// =================== СТАТУС И ИНДИКАЦИЯ ОШИБОК ===================
 
 function updateStatus() {
   const r = activeRoom();
   const statusEl = document.getElementById('geom-status');
   const errEl = document.getElementById('error-metric');
+  const banner = document.getElementById('alert-banner');
   state.recommendedDiag = null;
 
   const N = r.pts.length;
   if (!r.closed) {
-    statusEl.innerHTML = `Углов: <b>${N}</b> (контур не замкнут)`;
-    errEl.textContent = `Невязка: —`;
+    statusEl.innerHTML = `Углов: <b>${N}</b> (не замкнут)`;
+    errEl.textContent = `Макс. невязка: —`;
+    banner.style.display = 'none';
     return;
   }
 
-  // Подсчет измеренных стен
   let measuredWalls = 0;
   for (let i = 0; i < N; i++) {
     const j = (i + 1) % N;
@@ -399,44 +687,46 @@ function updateStatus() {
   const requiredDiags = Math.max(0, N - 3);
   const measuredDiags = Object.keys(r.diags).length;
 
-  // Поиск оптимальной недостающей диагонали
   if (measuredDiags < requiredDiags) {
     state.recommendedDiag = findBestMissingDiagonal(r);
   }
 
   if (measuredWalls < N) {
-    statusEl.innerHTML = `<span class="badge badge-warn">Стены: ${measuredWalls}/${N}</span> Диагонали: ${measuredDiags}/${requiredDiags}`;
+    statusEl.innerHTML = `<span class="badge badge-warn">Стены: ${measuredWalls}/${N}</span> Диаг: ${measuredDiags}/${requiredDiags}`;
   } else if (measuredDiags < requiredDiags) {
-    statusEl.innerHTML = `<span class="badge badge-warn">Нужно ещё диагоналей: ${requiredDiags - measuredDiags}</span> (всего ${measuredDiags}/${requiredDiags})`;
+    statusEl.innerHTML = `<span class="badge badge-warn">Нужно ещё диаг: ${requiredDiags - measuredDiags}</span> (${measuredDiags}/${requiredDiags})`;
   } else {
-    statusEl.innerHTML = `<span class="badge badge-ok">Контур определён (Стены: ${N}, Диаг: ${measuredDiags})</span>`;
+    statusEl.innerHTML = `<span class="badge badge-ok">Стены: ${N}/${N}, Диаг: ${measuredDiags}</span>`;
   }
 
-  errEl.textContent = `Невязка: ${state.lastResidual.toFixed(1)} мм`;
+  const maxErr = state.maxAbsError;
+  if (maxErr > TOLERANCE_MM) {
+    errEl.innerHTML = `<span class="badge badge-err">Невязка: ${maxErr.toFixed(1)} мм (> 10 мм!)</span>`;
+    const badList = Object.values(state.badEdges)
+      .map(b => `${b.name} (${b.delta > 0 ? '+' : ''}${Math.round(b.delta)} мм)`)
+      .join(', ');
+    banner.style.display = 'block';
+    banner.textContent = `⚠️ Превышен допуск ±10 мм! Конфликт размеров: ${badList}. Перемерьте выделенные красным линии.`;
+  } else {
+    errEl.innerHTML = `Макс. невязка: <b>${maxErr.toFixed(1)} мм</b> (допуск ±10)`;
+    banner.style.display = 'none';
+  }
 }
 
-// Подбор наиболее информативной непересекающейся диагонали внутри контура
 function findBestMissingDiagonal(r) {
   const N = r.pts.length;
   if (N < 4) return null;
 
-  let bestPair = null;
-  let bestScore = -Infinity;
-
+  let bestPair = null, bestScore = -Infinity;
   for (let i = 0; i < N; i++) {
     for (let j = i + 2; j < N; j++) {
-      if (i === 0 && j === N - 1) continue; // это стена, а не диагональ
+      if (i === 0 && j === N - 1) continue;
       const key = edgeKey(i, j);
-      if (r.diags[key] !== undefined) continue; // уже измерена
+      if (r.diags[key] !== undefined) continue;
 
-      // Проверка: середина диагонали должна лежать внутри многоугольника (чтобы не предлагать внешний промер сквозь стену)
-      const mid = {
-        x: (r.pts[i].x + r.pts[j].x) / 2,
-        y: (r.pts[i].y + r.pts[j].y) / 2
-      };
+      const mid = { x: (r.pts[i].x + r.pts[j].x) / 2, y: (r.pts[i].y + r.pts[j].y) / 2 };
       if (!pointInPolygon(mid, r.pts)) continue;
 
-      // Оценка качества диагонали (предпочитаем диагонали, связывающие вершины с наименьшим числом уже привязанных диагоналей)
       let degI = 0, degJ = 0;
       Object.keys(r.diags).forEach(k => {
         const [a, b] = k.split('-').map(Number);
@@ -445,7 +735,7 @@ function findBestMissingDiagonal(r) {
       });
 
       const d = dist(r.pts[i], r.pts[j]);
-      const score = - (degI + degJ) * 10000 + d * 0.1;
+      const score = -(degI + degJ) * 10000 + d * 0.1;
       if (score > bestScore) {
         bestScore = score;
         bestPair = [i, j];
@@ -467,147 +757,7 @@ function pointInPolygon(pt, poly) {
   return inside;
 }
 
-// =================== МАТЕМАТИЧЕСКИЙ РЕШАТЕЛЬ (АППРОКСИМАЦИЯ МНК) ===================
-
-function solveCurrentRoom() {
-  const r = activeRoom();
-  const N = r.pts.length;
-  if (!r.closed || N < 3) {
-    alert("Сначала замкните контур помещения.");
-    return;
-  }
-
-  // Собираем все активные ограничения (стены + диагонали)
-  const constraints = [];
-  for (let i = 0; i < N; i++) {
-    const j = (i + 1) % N;
-    const k = edgeKey(i, j);
-    if (r.walls[k] !== undefined) {
-      constraints.push({ i, j, L: r.walls[k], weight: 1.0 });
-    }
-  }
-  Object.keys(r.diags).forEach(k => {
-    const [i, j] = k.split('-').map(Number);
-    if (i < N && j < N) {
-      constraints.push({ i, j, L: r.diags[k], weight: 1.0 });
-    }
-  });
-
-  if (constraints.length === 0) {
-    alert("Введите хотя бы несколько размеров стен или диагоналей.");
-    return;
-  }
-
-  // 1. Первичное масштабирование чернового рисунка к реальным размерам
-  // Если у комнаты нет жестко зафиксированных точек (это первая комната), масштабируем всё относительно центра
-  const hasFixed = r.pts.some(p => p.fixed);
-  if (!hasFixed) {
-    let sumRatio = 0, countRatio = 0;
-    constraints.forEach(c => {
-      const curD = dist(r.pts[c.i], r.pts[c.j]);
-      if (curD > 1e-3) {
-        sumRatio += c.L / curD;
-        countRatio++;
-      }
-    });
-    if (countRatio > 0) {
-      const scaleFactor = sumRatio / countRatio;
-      const p0 = { x: r.pts[0].x, y: r.pts[0].y };
-      for (let i = 0; i < N; i++) {
-        r.pts[i].x = p0.x + (r.pts[i].x - p0.x) * scaleFactor;
-        r.pts[i].y = p0.y + (r.pts[i].y - p0.y) * scaleFactor;
-      }
-    }
-  }
-
-  // Определяем якоря (чтобы фигура не уплывала и не вращалась в пространстве)
-  // Если в комнате уже есть fixed точки (от соседней комнаты), они остаются неподвижными.
-  // Иначе фиксируем точку 0 и направление стены 0->1.
-  let anchor0 = -1, anchor1 = -1, dirAngle = 0;
-  if (!hasFixed) {
-    anchor0 = 0;
-    anchor1 = 1;
-    dirAngle = Math.atan2(r.pts[1].y - r.pts[0].y, r.pts[1].x - r.pts[0].x);
-    // Выравниваем базовую стену к ближайшей ортогонали (0, 90, 180, -90 град), если угол близок (< 12 град)
-    const snapAngles = [0, Math.PI/2, Math.PI, -Math.PI, -Math.PI/2];
-    for (let sa of snapAngles) {
-      if (Math.abs(dirAngle - sa) < 0.21) {
-        dirAngle = sa;
-        break;
-      }
-    }
-  }
-
-  const p0Orig = anchor0 !== -1 ? { x: r.pts[0].x, y: r.pts[0].y } : null;
-
-  // 2. Итерационная оптимизация (метод проекции градиента / пружинной релаксации с затуханием)
-  const iterations = 4000;
-  for (let iter = 0; iter < iterations; iter++) {
-    const step = 0.25 * (1 - iter / (iterations * 1.1));
-    const dx = new Float64Array(N);
-    const dy = new Float64Array(N);
-
-    for (let c of constraints) {
-      const pA = r.pts[c.i];
-      const pB = r.pts[c.j];
-      const vx = pB.x - pA.x;
-      const vy = pB.y - pA.y;
-      const d = Math.hypot(vx, vy) || 1e-6;
-      const diff = (d - c.L) * c.weight;
-      const ux = vx / d;
-      const uy = vy / d;
-
-      const fixA = pA.fixed || c.i === anchor0;
-      const fixB = pB.fixed || c.j === anchor0;
-
-      if (!fixA && !fixB) {
-        dx[c.i] += ux * diff * 0.5;
-        dy[c.i] += uy * diff * 0.5;
-        dx[c.j] -= ux * diff * 0.5;
-        dy[c.j] -= uy * diff * 0.5;
-      } else if (fixA && !fixB) {
-        dx[c.j] -= ux * diff;
-        dy[c.j] -= uy * diff;
-      } else if (!fixA && fixB) {
-        dx[c.i] += ux * diff;
-        dy[c.i] += uy * diff;
-      }
-    }
-
-    for (let i = 0; i < N; i++) {
-      if (r.pts[i].fixed || i === anchor0) continue;
-      r.pts[i].x += dx[i] * step;
-      r.pts[i].y += dy[i] * step;
-    }
-
-    // Удерживаем точку 1 на луче dirAngle из точки 0, чтобы исключить свободное вращение
-    if (anchor1 === 1 && !r.pts[1].fixed) {
-      const d01 = dist(r.pts[0], r.pts[1]);
-      r.pts[1].x = r.pts[0].x + Math.cos(dirAngle) * d01;
-      r.pts[1].y = r.pts[0].y + Math.sin(dirAngle) * d01;
-    }
-    if (p0Orig) {
-      r.pts[0].x = p0Orig.x;
-      r.pts[0].y = p0Orig.y;
-    }
-  }
-
-  // 3. Вычисление остаточной невязки (RMSE в мм)
-  let sumSqErr = 0;
-  constraints.forEach(c => {
-    const actual = dist(r.pts[c.i], r.pts[c.j]);
-    const err = actual - c.L;
-    sumSqErr += err * err;
-  });
-  state.lastResidual = Math.sqrt(sumSqErr / constraints.length);
-
-  saveState();
-  resetView();
-  updateStatus();
-  render();
-}
-
-// =================== ПРИВЯЗКА СЛЕДУЮЩЕЙ КОМНАТЫ ЧЕРЕЗ СТЕНУ ===================
+// =================== ПРИВЯЗКА ВТОРОЙ КОМНАТЫ ===================
 
 function startAttachRoom() {
   const r = activeRoom();
@@ -621,32 +771,26 @@ function startAttachRoom() {
 function attachNewRoomOnWall(wallIdxA, wallIdxB) {
   openModal(
     "Толщина стены / перегородки",
-    "Введите предварительную толщину стены между помещениями (в мм):",
+    "Введите предварительную толщину стены между помещениями (мм):",
     "120",
     (valStr) => {
       const thickness = parseFloat(valStr);
-      if (isNaN(thickness) || thickness < 0) return;
+      if (isNaN(thickness) || thickness < 0) return true;
 
       const r = activeRoom();
       const pA = r.pts[wallIdxA];
       const pB = r.pts[wallIdxB];
 
-      // Вычисляем внешнюю нормаль к выбранной стене
-      const vx = pB.x - pA.x;
-      const vy = pB.y - pA.y;
+      const vx = pB.x - pA.x, vy = pB.y - pA.y;
       const len = Math.hypot(vx, vy) || 1;
-      let nx = -vy / len;
-      let ny = vx / len;
+      let nx = -vy / len, ny = vx / len;
 
-      // Проверяем, чтобы нормаль смотрела НАРУЖУ из текущего помещения
       const midX = (pA.x + pB.x) / 2 + nx * 10;
       const midY = (pA.y + pB.y) / 2 + ny * 10;
       if (pointInPolygon({ x: midX, y: midY }, r.pts)) {
-        nx = -nx;
-        ny = -ny;
+        nx = -nx; ny = -ny;
       }
 
-      // Точки новой стены во второй комнате (сдвинутые на толщину перегородки)
       const newP1 = { x: pB.x + nx * thickness, y: pB.y + ny * thickness, fixed: true };
       const newP2 = { x: pA.x + nx * thickness, y: pA.y + ny * thickness, fixed: true };
 
@@ -655,6 +799,7 @@ function attachNewRoomOnWall(wallIdxA, wallIdxB) {
         id: newRoomId,
         name: `Пом. ${newRoomId}`,
         pts: [newP1, newP2],
+        sketchAngles: [],
         closed: false,
         walls: { "0-1": Math.round(len) },
         diags: {}
@@ -666,21 +811,32 @@ function attachNewRoomOnWall(wallIdxA, wallIdxB) {
       renderTabs();
       setMode('draw');
       render();
+      return true;
     }
   );
 }
 
-// =================== МОДАЛЬНОЕ ОКНО ВВОДА ===================
+// =================== МОДАЛЬНОЕ ОКНО С ПРОВЕРКОЙ ОШИБОК ===================
 
 let modalCallback = null;
 function openModal(title, desc, defaultValue, onSave) {
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-desc').textContent = desc;
+  const errBox = document.getElementById('modal-error');
+  errBox.style.display = 'none';
+  errBox.textContent = '';
+
   const inp = document.getElementById('modal-input');
   inp.value = defaultValue !== undefined ? defaultValue : '';
   document.getElementById('modal-overlay').style.display = 'flex';
   modalCallback = onSave;
   setTimeout(() => { inp.focus(); inp.select(); }, 50);
+}
+
+function showModalError(msg) {
+  const errBox = document.getElementById('modal-error');
+  errBox.textContent = msg;
+  errBox.style.display = 'block';
 }
 
 function closeModal() {
@@ -690,15 +846,19 @@ function closeModal() {
 
 document.getElementById('modal-ok').onclick = () => {
   const val = document.getElementById('modal-input').value;
-  if (modalCallback) modalCallback(val);
-  closeModal();
+  if (modalCallback) {
+    const shouldClose = modalCallback(val);
+    if (shouldClose !== false) closeModal();
+  } else {
+    closeModal();
+  }
 };
 
 document.getElementById('modal-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('modal-ok').click();
 });
 
-// =================== ОБРАБОТКА КАСАНИЙ И МЫШИ НА CANVAS ===================
+// =================== КАСАНИЯ И ВВОД РАЗМЕРОВ ===================
 
 let pointers = new Map();
 let lastPinchDist = null;
@@ -726,8 +886,7 @@ canvas.addEventListener('pointermove', (e) => {
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
   if (pointers.size === 1 && pointerDownPos) {
-    const moveDist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
-    if (moveDist > 8) isDragging = true;
+    if (Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y) > 8) isDragging = true;
     if (isDragging) {
       cam.x += e.clientX - prev.x;
       cam.y += e.clientY - prev.y;
@@ -760,10 +919,7 @@ canvas.addEventListener('pointermove', (e) => {
 
 canvas.addEventListener('pointerup', (e) => {
   pointers.delete(e.pointerId);
-  if (pointers.size < 2) {
-    lastPinchDist = null;
-    lastPanMid = null;
-  }
+  if (pointers.size < 2) { lastPinchDist = null; lastPanMid = null; }
   if (!isDragging && pointerDownPos) {
     const rect = canvas.getBoundingClientRect();
     handleTap(e.clientX - rect.left, e.clientY - rect.top);
@@ -771,12 +927,10 @@ canvas.addEventListener('pointerup', (e) => {
   if (pointers.size === 0) pointerDownPos = null;
 });
 
-// Колесо мыши для десктопной отладки
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   const rect = canvas.getBoundingClientRect();
-  const sx = e.clientX - rect.left;
-  const sy = e.clientY - rect.top;
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
   const factor = e.deltaY < 0 ? 1.12 : 0.89;
   const newScale = Math.min(Math.max(cam.scale * factor, 0.005), 1.5);
   cam.x = sx - (sx - cam.x) * (newScale / cam.scale);
@@ -789,11 +943,8 @@ function handleTap(sx, sy) {
   const r = activeRoom();
   const wPt = screenToWorld(sx, sy);
 
-  // Режим 1: Черновая отрисовка контура
   if (state.mode === 'draw') {
     if (r.closed) return;
-
-    // Если кликнули близко к первой точке и точек >= 3, замыкаем контур
     if (r.pts.length >= 3) {
       const p0Screen = worldToScreen(r.pts[0].x, r.pts[0].y);
       if (Math.hypot(sx - p0Screen.x, sy - p0Screen.y) < 26) {
@@ -801,8 +952,6 @@ function handleTap(sx, sy) {
         return;
       }
     }
-
-    // Легкая ортогональная подсказка при рисовании (если угол близок к 90 град)
     let newX = Math.round(wPt.x / 10) * 10;
     let newY = Math.round(wPt.y / 10) * 10;
     if (r.pts.length > 0) {
@@ -810,7 +959,6 @@ function handleTap(sx, sy) {
       if (Math.abs(newX - prev.x) < 180) newX = prev.x;
       if (Math.abs(newY - prev.y) < 180) newY = prev.y;
     }
-
     r.pts.push({ x: newX, y: newY, fixed: false });
     saveState();
     updateStatus();
@@ -818,18 +966,13 @@ function handleTap(sx, sy) {
     return;
   }
 
-  // Режим выбора общей стены для новой комнаты
   if (state.mode === 'select_wall_for_room') {
     const hitWall = findHitWall(r, sx, sy);
-    if (hitWall) {
-      attachNewRoomOnWall(hitWall[0], hitWall[1]);
-    }
+    if (hitWall) attachNewRoomOnWall(hitWall[0], hitWall[1]);
     return;
   }
 
-  // Режим 2: Измерение стен и диагоналей
   if (state.mode === 'measure') {
-    // 1. Сначала проверяем, попали ли в вершину (для задания диагонали)
     const hitV = findHitVertex(r, sx, sy);
     if (hitV !== -1) {
       if (state.selectedVertex === null) {
@@ -844,42 +987,34 @@ function handleTap(sx, sy) {
         state.selectedVertex = null;
         const N = r.pts.length;
         const isAdjacent = (Math.abs(vA - vB) === 1) || (vA === 0 && vB === N - 1) || (vB === 0 && vA === N - 1);
-        const k = edgeKey(vA, vB);
         const curDist = Math.round(dist(r.pts[vA], r.pts[vB]));
 
         if (isAdjacent) {
           promptWallLength(r, vA, vB, curDist);
         } else {
-          const existing = r.diags[k] !== undefined ? r.diags[k] : curDist;
-          openModal(
-            `Диагональ №${vA + 1} — №${vB + 1}`,
-            "Введите измеренную длину диагонали (в мм). Оставьте пустым, чтобы удалить:",
-            existing,
-            (valStr) => {
-              if (valStr.trim() === '') {
-                delete r.diags[k];
-              } else {
-                const v = parseFloat(valStr);
-                if (!isNaN(v) && v > 0) r.diags[k] = v;
-              }
-              saveState();
-              updateStatus();
-              render();
-            }
-          );
+          promptDiagLength(r, vA, vB, curDist);
         }
         render();
       }
       return;
     }
 
-    // 2. Если не в вершину — проверяем попадание по стене
     const hitWall = findHitWall(r, sx, sy);
     if (hitWall) {
       state.selectedVertex = null;
       const [i, j] = hitWall;
       const curDist = Math.round(dist(r.pts[i], r.pts[j]));
       promptWallLength(r, i, j, curDist);
+      return;
+    }
+
+    // Проверка клика по уже существующей диагонали для быстрого редактирования
+    const hitDiag = findHitDiag(r, sx, sy);
+    if (hitDiag) {
+      state.selectedVertex = null;
+      const [i, j] = hitDiag;
+      const curDist = Math.round(dist(r.pts[i], r.pts[j]));
+      promptDiagLength(r, i, j, curDist);
       return;
     }
 
@@ -893,16 +1028,57 @@ function promptWallLength(r, i, j, curDist) {
   const existing = r.walls[k] !== undefined ? r.walls[k] : curDist;
   openModal(
     `Стена №${i + 1} — №${j + 1}`,
-    "Введите фактическую длину стены по лазеру/рулетке (в мм):",
+    "Введите длину стены (мм). Оставьте пустым для сброса:",
     existing,
     (valStr) => {
-      const v = parseFloat(valStr);
-      if (!isNaN(v) && v > 0) {
-        r.walls[k] = v;
-        saveState();
-        updateStatus();
-        render();
+      if (valStr.trim() === '') {
+        delete r.walls[k];
+        solveCurrentRoom(false);
+        return true;
       }
+      const v = parseFloat(valStr);
+      if (isNaN(v) || v <= 0) {
+        showModalError("Введите положительное число в миллиметрах.");
+        return false;
+      }
+      const errMsg = validateMeasurement(r, i, j, v);
+      if (errMsg) {
+        showModalError(errMsg);
+        return false; // Блокируем закрытие окна при грубой геометрической ошибке
+      }
+      r.walls[k] = v;
+      solveCurrentRoom(Object.keys(r.walls).length === 1); // Центрируем при первом размере
+      return true;
+    }
+  );
+}
+
+function promptDiagLength(r, i, j, curDist) {
+  const k = edgeKey(i, j);
+  const existing = r.diags[k] !== undefined ? r.diags[k] : curDist;
+  openModal(
+    `Диагональ №${i + 1} — №${j + 1}`,
+    "Введите длину диагонали (мм). Оставьте пустым для удаления:",
+    existing,
+    (valStr) => {
+      if (valStr.trim() === '') {
+        delete r.diags[k];
+        solveCurrentRoom(false);
+        return true;
+      }
+      const v = parseFloat(valStr);
+      if (isNaN(v) || v <= 0) {
+        showModalError("Введите положительное число в миллиметрах.");
+        return false;
+      }
+      const errMsg = validateMeasurement(r, i, j, v);
+      if (errMsg) {
+        showModalError(errMsg);
+        return false;
+      }
+      r.diags[k] = v;
+      solveCurrentRoom(false);
+      return true;
     }
   );
 }
@@ -924,11 +1100,22 @@ function findHitWall(r, sx, sy) {
     const p1 = worldToScreen(r.pts[i].x, r.pts[i].y);
     const p2 = worldToScreen(r.pts[j].x, r.pts[j].y);
     const d = pointToSegmentDist(sx, sy, p1.x, p1.y, p2.x, p2.y);
-    if (d < minD) {
-      minD = d;
-      best = [i, j];
-    }
+    if (d < minD) { minD = d; best = [i, j]; }
   }
+  return best;
+}
+
+function findHitDiag(r, sx, sy) {
+  let best = null, minD = 20;
+  Object.keys(r.diags).forEach(k => {
+    const [i, j] = k.split('-').map(Number);
+    if (i < r.pts.length && j < r.pts.length) {
+      const p1 = worldToScreen(r.pts[i].x, r.pts[i].y);
+      const p2 = worldToScreen(r.pts[j].x, r.pts[j].y);
+      const d = pointToSegmentDist(sx, sy, p1.x, p1.y, p2.x, p2.y);
+      if (d < minD) { minD = d; best = [i, j]; }
+    }
+  });
   return best;
 }
 
@@ -941,7 +1128,16 @@ function pointToSegmentDist(px, py, x1, y1, x2, y2) {
   return Math.hypot(px - (x1 + t * vx), py - (y1 + t * vy));
 }
 
-// =================== ОТРИСОВКА ЧЕРТЕЖА НА CANVAS ===================
+// =================== ОТРИСОВКА С ОТОБРАЖЕНИЕМ ДЕЛЬТ ===================
+
+function formatEdgeLabel(prefix, enteredVal, actualVal) {
+  const diff = Math.round(actualVal - enteredVal);
+  if (Math.abs(diff) === 0) {
+    return `${prefix}${enteredVal}`;
+  }
+  const sign = diff > 0 ? '+' : '';
+  return `${prefix}${enteredVal} (${sign}${diff} мм)`;
+}
 
 function render() {
   const rect = canvas.parentElement.getBoundingClientRect();
@@ -950,19 +1146,14 @@ function render() {
 
   drawGrid(W, H);
 
-  // Сначала рисуем неактивные комнаты полупрозрачно
   state.rooms.forEach((room, idx) => {
-    if (idx !== state.activeRoomIdx) {
-      drawRoom(room, false);
-    }
+    if (idx !== state.activeRoomIdx) drawRoom(room, false);
   });
-
-  // Затем активную комнату
   drawRoom(activeRoom(), true);
 }
 
 function drawGrid(W, H) {
-  const stepMM = 1000; // Сетка 1 метр
+  const stepMM = 1000;
   const stepPx = stepMM * cam.scale;
   if (stepPx < 15) return;
 
@@ -972,12 +1163,8 @@ function drawGrid(W, H) {
   const startY = cam.y % stepPx;
 
   ctx.beginPath();
-  for (let x = startX; x < W; x += stepPx) {
-    ctx.moveTo(x, 0); ctx.lineTo(x, H);
-  }
-  for (let y = startY; y < H; y += stepPx) {
-    ctx.moveTo(0, y); ctx.lineTo(W, y);
-  }
+  for (let x = startX; x < W; x += stepPx) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+  for (let y = startY; y < H; y += stepPx) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
   ctx.stroke();
 }
 
@@ -985,7 +1172,6 @@ function drawRoom(r, isActive) {
   const N = r.pts.length;
   if (N === 0) return;
 
-  // Заливка замкнутого помещения
   if (r.closed && N >= 3) {
     ctx.beginPath();
     r.pts.forEach((p, idx) => {
@@ -998,28 +1184,35 @@ function drawRoom(r, isActive) {
     ctx.fill();
   }
 
-  // Отрисовка измеренных диагоналей (активная комната)
+  // Диагонали
   if (isActive) {
     Object.keys(r.diags).forEach(k => {
       const [i, j] = k.split('-').map(Number);
       if (i >= N || j >= N) return;
       const p1 = worldToScreen(r.pts[i].x, r.pts[i].y);
       const p2 = worldToScreen(r.pts[j].x, r.pts[j].y);
+      const actualD = dist(r.pts[i], r.pts[j]);
+      const isBad = state.badEdges[k] !== undefined;
 
       ctx.save();
       ctx.setLineDash([6, 4]);
-      ctx.strokeStyle = '#a855f7';
-      ctx.lineWidth = 1.8;
+      ctx.strokeStyle = isBad ? '#ef4444' : '#a855f7';
+      ctx.lineWidth = isBad ? 2.8 : 1.8;
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
       ctx.stroke();
       ctx.restore();
 
-      drawLabel((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, `Д: ${r.diags[k]}`, '#d8b4fe', '#3b0764');
+      const lbl = formatEdgeLabel('Д: ', r.diags[k], actualD);
+      drawLabel(
+        (p1.x + p2.x) / 2, (p1.y + p2.y) / 2,
+        lbl,
+        isBad ? '#fecaca' : '#d8b4fe',
+        isBad ? '#991b1b' : '#3b0764'
+      );
     });
 
-    // Подсветка РЕКОМЕНДУЕМОЙ программой диагонали
     if (state.recommendedDiag) {
       const [ri, rj] = state.recommendedDiag;
       const p1 = worldToScreen(r.pts[ri].x, r.pts[ri].y);
@@ -1039,7 +1232,7 @@ function drawRoom(r, isActive) {
     }
   }
 
-  // Отрисовка стен
+  // Стены
   const edgeCount = r.closed ? N : N - 1;
   for (let i = 0; i < edgeCount; i++) {
     const j = (i + 1) % N;
@@ -1047,6 +1240,8 @@ function drawRoom(r, isActive) {
     const p2 = worldToScreen(r.pts[j].x, r.pts[j].y);
     const k = edgeKey(i, j);
     const hasMeasured = r.walls[k] !== undefined;
+    const actualD = dist(r.pts[i], r.pts[j]);
+    const isBad = isActive && state.badEdges[k] !== undefined;
 
     ctx.beginPath();
     ctx.moveTo(p1.x, p1.y);
@@ -1054,24 +1249,32 @@ function drawRoom(r, isActive) {
     if (!isActive) {
       ctx.strokeStyle = '#475569';
       ctx.lineWidth = 2;
+    } else if (isBad) {
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 4;
     } else {
       ctx.strokeStyle = hasMeasured ? '#22c55e' : '#38bdf8';
       ctx.lineWidth = hasMeasured ? 3.5 : 2.5;
     }
     ctx.stroke();
 
-    // Подпись длины стены
     const mx = (p1.x + p2.x) / 2;
     const my = (p1.y + p2.y) / 2;
-    const val = hasMeasured ? `${r.walls[k]}` : `~${Math.round(dist(r.pts[i], r.pts[j]))}`;
+    const valText = hasMeasured
+      ? formatEdgeLabel('', r.walls[k], actualD)
+      : `~${Math.round(actualD)}`;
+
     if (isActive) {
-      drawLabel(mx, my, val, hasMeasured ? '#bbf7d0' : '#bae6fd', hasMeasured ? '#14532d' : '#0c4a6e');
+      drawLabel(
+        mx, my, valText,
+        isBad ? '#fecaca' : (hasMeasured ? '#bbf7d0' : '#bae6fd'),
+        isBad ? '#991b1b' : (hasMeasured ? '#14532d' : '#0c4a6e')
+      );
     } else if (hasMeasured) {
-      drawLabel(mx, my, val, '#94a3b8', '#1e293b');
+      drawLabel(mx, my, `${Math.round(actualD)}`, '#94a3b8', '#1e293b');
     }
   }
 
-  // Площадь и имя помещения в центре
   if (r.closed && N >= 3) {
     const areaM2 = computePolygonAreaM2(r.pts);
     const c = computeCentroid(r.pts);
@@ -1082,25 +1285,17 @@ function drawRoom(r, isActive) {
     ctx.fillText(`${r.name}: ${areaM2.toFixed(2)} м²`, sc.x, sc.y);
   }
 
-  // Отрисовка вершин (углов)
   if (isActive) {
     r.pts.forEach((p, idx) => {
       const sp = worldToScreen(p.x, p.y);
       ctx.beginPath();
       ctx.arc(sp.x, sp.y, state.selectedVertex === idx ? 10 : 7, 0, Math.PI * 2);
-      if (state.selectedVertex === idx) {
-        ctx.fillStyle = '#f59e0b';
-      } else if (p.fixed) {
-        ctx.fillStyle = '#ef4444';
-      } else {
-        ctx.fillStyle = '#0f172a';
-      }
+      ctx.fillStyle = state.selectedVertex === idx ? '#f59e0b' : (p.fixed ? '#ef4444' : '#0f172a');
       ctx.fill();
       ctx.lineWidth = 2.5;
       ctx.strokeStyle = state.selectedVertex === idx ? '#fff' : '#38bdf8';
       ctx.stroke();
 
-      // Номер угла
       ctx.fillStyle = '#94a3b8';
       ctx.font = 'bold 11px sans-serif';
       ctx.textAlign = 'left';
@@ -1128,7 +1323,7 @@ function computePolygonAreaM2(pts) {
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
     area += (pts[j].x + pts[i].x) * (pts[j].y - pts[i].y);
   }
-  return Math.abs(area / 2) / 1e6; // из мм² в м²
+  return Math.abs(area / 2) / 1e6;
 }
 
 function computeCentroid(pts) {
@@ -1137,13 +1332,12 @@ function computeCentroid(pts) {
   return { x: x / pts.length, y: y / pts.length };
 }
 
-// =================== ГЕНЕРАЦИЯ DXF ДЛЯ AUTOCAD (МАСШТАБ 1:1 В ММ) ===================
+// =================== ЭКСПОРТ DXF ===================
 
 function exportDXF() {
   let dxf = [];
   const add = (code, val) => { dxf.push(code, val); };
 
-  // Секция ENTITIES (упрощенный и 100% совместимый с AutoCAD R12/2000+ DXF)
   add(0, "SECTION");
   add(2, "ENTITIES");
 
@@ -1151,14 +1345,13 @@ function exportDXF() {
     const N = r.pts.length;
     if (N < 2) return;
 
-    // 1. Контур стен (слой WALLS, в AutoCAD ось Y направлена вверх, поэтому инвертируем Y экранный -> -Y)
     const count = r.closed ? N : N - 1;
     for (let i = 0; i < count; i++) {
       const j = (i + 1) % N;
       const p1 = r.pts[i], p2 = r.pts[j];
       add(0, "LINE");
       add(8, "WALLS");
-      add(62, 7); // белый/черный
+      add(62, 7);
       add(10, p1.x.toFixed(2));
       add(20, (-p1.y).toFixed(2));
       add(30, "0.0");
@@ -1166,28 +1359,26 @@ function exportDXF() {
       add(21, (-p2.y).toFixed(2));
       add(31, "0.0");
 
-      // Текст размера стены (слой DIMENSIONS)
       const mx = (p1.x + p2.x) / 2;
       const my = (-p1.y - p2.y) / 2;
       const len = Math.round(dist(p1, p2));
       add(0, "TEXT");
       add(8, "DIMENSIONS");
-      add(62, 3); // зеленый
+      add(62, 3);
       add(10, mx.toFixed(2));
       add(20, my.toFixed(2));
       add(30, "0.0");
-      add(40, "120.0"); // высота текста 120 мм
+      add(40, "120.0");
       add(1, `${len}`);
     }
 
-    // 2. Измеренные диагонали (слой DIAGONALS)
     Object.keys(r.diags).forEach(k => {
       const [i, j] = k.split('-').map(Number);
       if (i < N && j < N) {
         const p1 = r.pts[i], p2 = r.pts[j];
         add(0, "LINE");
         add(8, "DIAGONALS");
-        add(62, 6); // пурпурный
+        add(62, 6);
         add(10, p1.x.toFixed(2));
         add(20, (-p1.y).toFixed(2));
         add(30, "0.0");
@@ -1197,7 +1388,6 @@ function exportDXF() {
       }
     });
 
-    // 3. Подпись помещения и площади (слой ROOM_INFO)
     if (r.closed && N >= 3) {
       const c = computeCentroid(r.pts);
       const area = computePolygonAreaM2(r.pts).toFixed(2);
@@ -1226,10 +1416,10 @@ function exportDXF() {
   URL.revokeObjectURL(url);
 }
 
-// =================== ИНИЦИАЛИЗАЦИЯ ===================
 loadState();
 renderTabs();
 resizeCanvas();
+evaluateRoomErrors(activeRoom());
 updateStatus();
 </script>
 </body>
