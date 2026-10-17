@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Обмеры">
-  <title>Инженерные обмеры (PWA)</title>
+  <title>Инженерные обмеры — Bosch GLM 50C</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -29,35 +29,36 @@
     header {
       background: var(--panel);
       border-bottom: 1px solid var(--border);
-      padding: calc(env(safe-area-inset-top, 10px) + 6px) 12px 8px;
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: calc(env(safe-area-inset-top, 10px) + 6px) 10px 8px;
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
       z-index: 10;
     }
     .room-tabs {
-      display: flex; gap: 6px; overflow-x: auto; max-width: 55%;
+      display: flex; gap: 5px; overflow-x: auto; max-width: 42%;
       scrollbar-width: none;
     }
     .room-tab {
       background: #0f172a; color: var(--muted);
       border: 1px solid var(--border); border-radius: 6px;
-      padding: 6px 10px; font-size: 13px; font-weight: 600; white-space: nowrap;
+      padding: 6px 9px; font-size: 12px; font-weight: 600; white-space: nowrap;
       cursor: pointer;
     }
     .room-tab.active {
       background: var(--accent); color: #0f172a; border-color: var(--accent);
     }
-    .top-actions { display: flex; gap: 6px; }
+    .top-actions { display: flex; gap: 5px; align-items: center; }
     button {
       background: #334155; color: var(--text);
       border: 1px solid #475569; border-radius: 6px;
-      padding: 7px 11px; font-size: 13px; font-weight: 600;
-      cursor: pointer; transition: 0.15s;
+      padding: 7px 10px; font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: 0.15s; white-space: nowrap;
     }
     button:active { transform: scale(0.96); }
     button.primary { background: var(--accent); color: #0f172a; border-color: var(--accent); }
     button.success { background: var(--success); color: #0f172a; border-color: var(--success); }
     button.warn { background: var(--warn); color: #0f172a; border-color: var(--warn); }
     button.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+    button.ble-connected { background: #16a34a; color: #fff; border-color: #22c55e; }
 
     #status-bar {
       background: rgba(30, 41, 59, 0.95);
@@ -84,6 +85,14 @@
       z-index: 9;
     }
 
+    #laser-toast {
+      position: absolute; top: 52px; left: 50%; transform: translateX(-50%);
+      background: rgba(22, 163, 74, 0.95); color: #fff;
+      padding: 7px 16px; border-radius: 20px; font-size: 13px; font-weight: 700;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+      display: none; z-index: 30; pointer-events: none;
+    }
+
     #canvas-wrap {
       flex: 1; position: relative; overflow: hidden;
       touch-action: none;
@@ -92,7 +101,7 @@
 
     #hint-box {
       position: absolute; top: 10px; left: 12px; right: 12px;
-      background: rgba(15, 23, 42, 0.85);
+      background: rgba(15, 23, 42, 0.88);
       border: 1px solid var(--border); border-radius: 8px;
       padding: 8px 12px; font-size: 12px; color: #e2e8f0;
       pointer-events: none; backdrop-filter: blur(4px);
@@ -142,8 +151,9 @@
 <header>
   <div class="room-tabs" id="room-tabs"></div>
   <div class="top-actions">
+    <button id="btn-ble" onclick="connectBoschBLE()">📡 GLM 50C</button>
     <button onclick="resetView()" title="Центрировать вид">⌖ Вид</button>
-    <button class="success" onclick="exportDXF()">DXF (CAD)</button>
+    <button class="success" onclick="exportDXF()">DXF</button>
   </div>
 </header>
 
@@ -157,6 +167,7 @@
 <div id="canvas-wrap">
   <canvas id="cad-canvas"></canvas>
   <div id="hint-box">Тапайте по экрану, чтобы наметить углы первого помещения по внутреннему контуру.</div>
+  <div id="laser-toast">🎯 GLM 50C: 0 мм</div>
 </div>
 
 <footer>
@@ -177,9 +188,9 @@
 <div id="modal-overlay">
   <div class="modal">
     <h3 id="modal-title">Размер в миллиметрах</h3>
-    <p id="modal-desc">Введите измеренное значение (мм):</p>
+    <p id="modal-desc">Введите значение вручную или нажмите кнопку на Bosch GLM 50C:</p>
     <div id="modal-error" class="modal-error"></div>
-    <input type="number" id="modal-input" inputmode="decimal" placeholder="Например: 4250">
+    <input type="text" id="modal-input" inputmode="decimal" placeholder="Например: 4250 или 4.250">
     <div class="modal-actions">
       <button onclick="closeModal()">Отмена</button>
       <button class="primary" id="modal-ok">Сохранить</button>
@@ -190,24 +201,34 @@
 <script>
 const TOLERANCE_MM = 10.0; // Допуск на невязку +-10 мм
 
+// Константы протокола Bosch GLM 50 C / 100 C / 120 C
+const BOSCH_SERVICE_UUID = "02a6c0d0-0451-4000-b000-fb3210111989";
+const BOSCH_CHAR_UUID    = "02a6c0d1-0451-4000-b000-fb3210111989";
+// Команда включения Auto-Sync (дальномер сам присылает пакет при каждом нажатии кнопки замера)
+const BOSCH_AUTOSYNC_CMD = new Uint8Array([0xC0, 0x55, 0x02, 0x01, 0x00, 0x1A]);
+
+let bleDevice = null;
+let bleChar = null;
+
 let state = {
   rooms: [
     {
       id: 1,
       name: "Пом. 1",
-      pts: [],          // [{x, y, fixed: false}] в мм
-      sketchAngles: [], // Исходные углы чернового контура для сохранения формы при неполных диагоналях
+      pts: [],
+      sketchAngles: [],
       closed: false,
-      walls: {},        // "i-j": измеренная длина в мм
-      diags: {}         // "i-j": измеренная длина в мм
+      walls: {},
+      diags: {}
     }
   ],
   activeRoomIdx: 0,
   mode: 'draw',
   selectedVertex: null,
   recommendedDiag: null,
+  activeTargetEdge: null, // { i, j, isWall } — текущий прицел для автоматического приема с дальномера
   maxAbsError: 0,
-  badEdges: {}          // "i-j": delta (для подсветки красным при |delta| > 10 мм)
+  badEdges: {}
 };
 
 let cam = {
@@ -220,7 +241,7 @@ const canvas = document.getElementById('cad-canvas');
 const ctx = canvas.getContext('2d');
 
 function loadState() {
-  const saved = localStorage.getItem('cad_survey_state_v2');
+  const saved = localStorage.getItem('cad_survey_state_v3');
   if (saved) {
     try {
       state = JSON.parse(saved);
@@ -229,7 +250,7 @@ function loadState() {
   }
 }
 function saveState() {
-  localStorage.setItem('cad_survey_state_v2', JSON.stringify(state));
+  localStorage.setItem('cad_survey_state_v3', JSON.stringify(state));
 }
 
 function activeRoom() {
@@ -259,6 +280,195 @@ function resizeCanvas() {
   render();
 }
 window.addEventListener('resize', resizeCanvas);
+
+// =================== МОДУЛЬ BLUETOOTH BOSCH GLM 50 C ===================
+
+async function connectBoschBLE() {
+  if (!navigator.bluetooth) {
+    alert(
+      "Стандартный Safari на iOS блокирует прямой Web Bluetooth API.\n\n" +
+      "Чтобы подключить Bosch GLM 50C напрямую к этой странице на iPhone/iPad:\n" +
+      "1. Установите бесплатный браузер «Bluefy – Web BLE Browser» из App Store.\n" +
+      "2. Откройте эту ссылку в Bluefy и нажмите «📡 GLM 50C»."
+    );
+    return;
+  }
+
+  try {
+    if (bleDevice && bleDevice.gatt.connected) {
+      bleDevice.gatt.disconnect();
+      updateBleButton(false);
+      return;
+    }
+
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [
+        { services: [BOSCH_SERVICE_UUID] },
+        { namePrefix: "Bosch" },
+        { namePrefix: "GLM" }
+      ],
+      optionalServices: [BOSCH_SERVICE_UUID]
+    });
+
+    bleDevice.addEventListener('gattserverdisconnected', () => {
+      updateBleButton(false);
+      showLaserToast("📡 GLM 50C отключен", true);
+    });
+
+    const server = await bleDevice.gatt.connect();
+    const service = await server.getPrimaryService(BOSCH_SERVICE_UUID);
+    bleChar = await service.getCharacteristic(BOSCH_CHAR_UUID);
+
+    await bleChar.startNotifications();
+    bleChar.addEventListener('characteristicvaluechanged', handleBoschPacket);
+
+    // Включаем режим Auto-Sync на Bosch GLM 50C
+    await bleChar.writeValue(BOSCH_AUTOSYNC_CMD);
+
+    updateBleButton(true, bleDevice.name || "GLM 50C");
+    showLaserToast("✅ Bosch GLM 50C подключен!");
+
+    // Если контур замкнут, сразу активируем прицел на первую неизмеренную стену
+    if (activeRoom().closed) {
+      setMode('measure');
+      autoSelectNextTarget();
+      render();
+    }
+  } catch (err) {
+    console.error("BLE Error:", err);
+    if (err.name !== 'NotFoundError') {
+      alert("Ошибка подключения к Bosch GLM 50C: " + err.message);
+    }
+  }
+}
+
+function updateBleButton(connected, name = "GLM 50C") {
+  const btn = document.getElementById('btn-ble');
+  if (connected) {
+    btn.className = "ble-connected";
+    btn.textContent = "🟢 " + name;
+  } else {
+    btn.className = "";
+    btn.textContent = "📡 GLM 50C";
+  }
+}
+
+/**
+ * Разбор бинарного пакета от Bosch GLM 50 C (протокол MT-Connectivity)
+ * При выстреле лазером в режиме Auto-Sync приходит пакет >= 11 байт (0xC0 0x55 ...),
+ * где байты [7..10] содержат Float32 (Little-Endian) — измеренную дистанцию в метрах.
+ */
+function handleBoschPacket(event) {
+  const dv = event.target.value;
+  if (!dv || dv.byteLength < 11) return;
+
+  // Читаем Float32 с 7-го байта (индекс 7, Little-Endian = true)
+  const meters = dv.getFloat32(7, true);
+  if (isNaN(meters) || meters <= 0.03 || meters > 100.0) return;
+
+  const mm = Math.round(meters * 1000);
+  applyLaserMeasurement(mm);
+}
+
+/**
+ * Применение размера, прилетевшего с лазерного дальномера Bosch GLM 50C
+ */
+function applyLaserMeasurement(mm) {
+  showLaserToast(`🎯 GLM 50C: ${mm} мм`);
+
+  // 1. Если открыто модальное окно — вставляем значение прямо в него и автоматически нажимаем ОК
+  const modalOverlay = document.getElementById('modal-overlay');
+  if (modalOverlay.style.display === 'flex') {
+    const inp = document.getElementById('modal-input');
+    inp.value = mm;
+    document.getElementById('modal-ok').click();
+    return;
+  }
+
+  // 2. Если модальное окно закрыто — работаем в потоковом режиме (Hands-Free) по прицелу activeTargetEdge
+  const r = activeRoom();
+  if (!r.closed) return;
+
+  if (!state.activeTargetEdge) {
+    autoSelectNextTarget();
+  }
+  const target = state.activeTargetEdge;
+  if (!target) return;
+
+  const { i, j, isWall } = target;
+  const errMsg = validateMeasurement(r, i, j, mm);
+  if (errMsg) {
+    // Если замер физически невозможен — открываем модальное окно с ошибкой
+    if (isWall) promptWallLength(r, i, j, mm);
+    else promptDiagLength(r, i, j, mm);
+    showModalError(errMsg);
+    return;
+  }
+
+  const k = edgeKey(i, j);
+  if (isWall) {
+    r.walls[k] = mm;
+    solveCurrentRoom(Object.keys(r.walls).length === 1);
+  } else {
+    r.diags[k] = mm;
+    solveCurrentRoom(false);
+  }
+
+  // Переводим прицел на следующую неизмеренную стену или рекомендуемую диагональ
+  autoSelectNextTarget();
+  updateStatus();
+  render();
+}
+
+function showLaserToast(text, isWarn = false) {
+  const toast = document.getElementById('laser-toast');
+  toast.textContent = text;
+  toast.style.background = isWarn ? 'rgba(239, 68, 68, 0.95)' : 'rgba(22, 163, 74, 0.95)';
+  toast.style.display = 'block';
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => { toast.style.display = 'none'; }, 2600);
+}
+
+// Автоматический выбор следующей неизмеренной стены или рекомендуемой диагонали для прицела дальномера
+function autoSelectNextTarget() {
+  const r = activeRoom();
+  const N = r.pts.length;
+  if (!r.closed || N < 3) {
+    state.activeTargetEdge = null;
+    return;
+  }
+
+  // Ищем первую неизмеренную стену по порядку
+  for (let i = 0; i < N; i++) {
+    const j = (i + 1) % N;
+    if (r.walls[edgeKey(i, j)] === undefined) {
+      state.activeTargetEdge = { i, j, isWall: true };
+      return;
+    }
+  }
+
+  // Если все стены измерены, берем рекомендуемую диагональ
+  const rec = findBestMissingDiagonal(r);
+  if (rec) {
+    state.activeTargetEdge = { i: rec[0], j: rec[1], isWall: false };
+    return;
+  }
+
+  state.activeTargetEdge = null;
+}
+
+// Умный парсер ввода: понимает и миллиметры ("4250"), и метры с точкой/запятой от HID-клавиатур ("4.253" -> 4253 мм)
+function parseDistanceInput(rawStr) {
+  const clean = rawStr.trim().replace(',', '.');
+  if (!clean) return NaN;
+  const num = parseFloat(clean);
+  if (isNaN(num) || num <= 0) return NaN;
+  // Если введено число с десятичной точкой и меньше 50 (например, 4.253 м), переводим в мм
+  if (clean.includes('.') && num < 50) {
+    return Math.round(num * 1000);
+  }
+  return Math.round(num);
+}
 
 // =================== ВКЛАДКИ И РЕЖИМЫ ===================
 
@@ -292,10 +502,11 @@ function setMode(m) {
   const r = activeRoom();
   if (m === 'draw') {
     hint.textContent = r.closed
-      ? "Контур замкнут. Перейдите в «2. Размеры» для ввода промеров стен и диагоналей."
+      ? "Контур замкнут. Перейдите в «2. Размеры» для промеров с GLM 50C или вручную."
       : "Тапайте по экрану для добавления углов. Для замыкания нажмите «Замкнуть контур» или тапните в точку 1.";
   } else if (m === 'measure') {
-    hint.textContent = "Тапните на СТЕНУ для ввода её длины, или последовательно на ДВА УГЛА для ввода диагонали.";
+    autoSelectNextTarget();
+    hint.textContent = "🎯 Стреляйте дальномером в подсвеченную желтым цель, или тапните на любую стену / два угла вручную.";
   } else if (m === 'select_wall_for_room') {
     hint.textContent = "Тапните на общую стену текущего помещения, за которой находится следующая комната.";
   }
@@ -330,7 +541,6 @@ function closePolygon() {
     return;
   }
   r.closed = true;
-  // Сохраняем черновые внутренние углы поворота для удержания формы пока нет диагоналей
   saveSketchAngles(r);
   setMode('measure');
   saveState();
@@ -356,13 +566,14 @@ function saveSketchAngles(r) {
 
 function clearAllProject() {
   if (!confirm("Очистить весь проект и начать заново?")) return;
-  localStorage.removeItem('cad_survey_state_v2');
+  localStorage.removeItem('cad_survey_state_v3');
   state = {
     rooms: [{ id: 1, name: "Пом. 1", pts: [], sketchAngles: [], closed: false, walls: {}, diags: {} }],
     activeRoomIdx: 0,
     mode: 'draw',
     selectedVertex: null,
     recommendedDiag: null,
+    activeTargetEdge: null,
     maxAbsError: 0,
     badEdges: {}
   };
@@ -396,24 +607,17 @@ function resetView() {
   render();
 }
 
-// =================== ГЕОМЕТРИЧЕСКИЙ ВАЛИДАТОР (ПРОВЕРКА НЕВЕРНЫХ РАЗМЕРОВ) ===================
+// =================== ГЕОМЕТРИЧЕСКИЙ ВАЛИДАТОР ===================
 
-/**
- * Проверяет, не нарушает ли вводимый размер L между вершинами (u, v)
- * фундаментальные геометрические законы (неравенство треугольника и замкнутого полигона)
- * с запасом допуска TOLERANCE_MM (10 мм).
- */
 function validateMeasurement(r, u, v, newL) {
   const N = r.pts.length;
   const targetKey = edgeKey(u, v);
 
-  // Собираем матрицу известных расстояний (только введенные пользователем размеры)
   const known = {};
   Object.keys(r.walls).forEach(k => known[k] = r.walls[k]);
   Object.keys(r.diags).forEach(k => known[k] = r.diags[k]);
   known[targetKey] = newL;
 
-  // 1. Проверка для каждого явно образованного треугольника (i, j, m), где все 3 стороны измерены
   for (let i = 0; i < N; i++) {
     for (let j = i + 1; j < N; j++) {
       for (let m = j + 1; m < N; m++) {
@@ -423,7 +627,6 @@ function validateMeasurement(r, u, v, newL) {
         if (d1 !== undefined && d2 !== undefined && d3 !== undefined) {
           const maxSide = Math.max(d1, d2, d3);
           const sumOther = d1 + d2 + d3 - maxSide;
-          // Неравенство треугольника: самая длинная сторона должна быть строго меньше суммы двух других
           if (maxSide >= sumOther + TOLERANCE_MM) {
             return `Невозможный треугольник углов (${i+1}-${j+1}-${m+1}): сторона ${maxSide} мм больше или равна сумме двух других (${sumOther} мм)! Проверьте замер.`;
           }
@@ -432,7 +635,6 @@ function validateMeasurement(r, u, v, newL) {
     }
   }
 
-  // 2. Проверка замкнутого периметра (если все N стен измерены)
   let allWallsKnown = true;
   let wallLengths = [];
   for (let i = 0; i < N; i++) {
@@ -444,14 +646,12 @@ function validateMeasurement(r, u, v, newL) {
     const maxWall = wallLengths.reduce((a, b) => a.L > b.L ? a : b);
     const sumOthers = wallLengths.reduce((acc, w) => acc + w.L, 0) - maxWall.L;
     if (maxWall.L >= sumOthers + TOLERANCE_MM) {
-      return `Ошибка периметра: стена ${maxWall.idx1}-${maxWall.idx2} (${maxWall.L} мм) длиннее суммы всех остальных стен помещения (${sumOthers} мм)!`;
+      return `Ошибка периметра: стена ${maxWall.idx1}-${maxWall.idx2} (${maxWall.L} мм) длиннее суммы всех остальных стен (${sumOthers} мм)!`;
     }
   }
 
-  // 3. Проверка диагонали относительно цепочки стен по обоим путям обхода полигона
   const isWall = (Math.abs(u - v) === 1) || (u === 0 && v === N - 1) || (v === 0 && u === N - 1);
   if (!isWall) {
-    // Путь 1: от u к v по часовой
     let path1Complete = true, sum1 = 0;
     for (let curr = u; curr !== v; curr = (curr + 1) % N) {
       const next = (curr + 1) % N;
@@ -460,10 +660,9 @@ function validateMeasurement(r, u, v, newL) {
       sum1 += w;
     }
     if (path1Complete && newL >= sum1 + TOLERANCE_MM) {
-      return `Диагональ ${u+1}-${v+1} (${newL} мм) не может быть длиннее суммы обходящих её стен (${sum1} мм)!`;
+      return `Диагональ ${u+1}-${v+1} (${newL} мм) длиннее суммы обходящих её стен (${sum1} мм)!`;
     }
 
-    // Путь 2: от v к u
     let path2Complete = true, sum2 = 0;
     for (let curr = v; curr !== u; curr = (curr + 1) % N) {
       const next = (curr + 1) % N;
@@ -472,29 +671,26 @@ function validateMeasurement(r, u, v, newL) {
       sum2 += w;
     }
     if (path2Complete && newL >= sum2 + TOLERANCE_MM) {
-      return `Диагональ ${u+1}-${v+1} (${newL} мм) не может быть длиннее суммы обходящих её стен (${sum2} мм)!`;
+      return `Диагональ ${u+1}-${v+1} (${newL} мм) длиннее суммы обходящих её стен (${sum2} мм)!`;
     }
   }
 
-  return null; // Ошибок нет
+  return null;
 }
 
-// =================== МАТЕМАТИЧЕСКИЙ РЕШАТЕЛЬ (ВАРИАНТ Б + ДОПУСК +-10 ММ) ===================
+// =================== МАТЕМАТИЧЕСКИЙ РЕШАТЕЛЬ ===================
 
 function solveCurrentRoom(centerAfter = false) {
   const r = activeRoom();
   const N = r.pts.length;
   if (!r.closed || N < 3) return;
 
-  // 1. Если введены только стены (или часть стен) и нет диагоналей — сначала масштабируем и выстраиваем длины стен
   const measuredWallKeys = Object.keys(r.walls);
   const measuredDiagKeys = Object.keys(r.diags);
-
   if (measuredWallKeys.length === 0 && measuredDiagKeys.length === 0) return;
 
   const hasFixed = r.pts.some(p => p.fixed);
 
-  // Предварительное приведение масштаба чернового контура к реальным миллиметрам
   if (!hasFixed) {
     let sumScale = 0, cntScale = 0;
     measuredWallKeys.forEach(k => {
@@ -520,8 +716,6 @@ function solveCurrentRoom(centerAfter = false) {
     }
   }
 
-  // Формируем список жестких связей (стены + диагонали)
-  // Вариант Б: веса обратно пропорциональны длине (упругая деформация стержней), при этом стены имеют базовый приоритет 1.5x
   const constraints = [];
   for (let i = 0; i < N; i++) {
     const j = (i + 1) % N;
@@ -529,7 +723,6 @@ function solveCurrentRoom(centerAfter = false) {
     if (r.walls[k] !== undefined) {
       constraints.push({ i, j, L: r.walls[k], stiff: 1.5, isWall: true, key: k });
     } else {
-      // Неизмеренная стена — слабое удержание текущей длины, чтобы контур не схлопывался
       constraints.push({ i, j, L: dist(r.pts[i], r.pts[j]), stiff: 0.02, isWall: false, key: k });
     }
   }
@@ -541,8 +734,6 @@ function solveCurrentRoom(centerAfter = false) {
     }
   });
 
-  // Если диагоналей еще недостаточно (< N - 3), добавляем мягкие угловые распорки по черновым углам,
-  // чтобы стены при вводе сразу меняли свою длину в масштабе, не ломая форму комнаты!
   const reqDiags = Math.max(0, N - 3);
   if (measuredDiagKeys.length < reqDiags) {
     for (let i = 0; i < N; i++) {
@@ -560,7 +751,6 @@ function solveCurrentRoom(centerAfter = false) {
     }
   }
 
-  // Якоря фиксации положения в пространстве
   let anchor0 = -1, anchor1 = -1, dirAngle = 0;
   if (!hasFixed) {
     anchor0 = 0;
@@ -573,7 +763,6 @@ function solveCurrentRoom(centerAfter = false) {
   }
   const p0Orig = anchor0 !== -1 ? { x: r.pts[0].x, y: r.pts[0].y } : null;
 
-  // Итерационный решатель нелинейной системы МНК (Гаусс-Зейдель по связям с демпфированием)
   const totalIters = 5000;
   for (let iter = 0; iter < totalIters; iter++) {
     const damp = 0.45 * (1 - iter / (totalIters * 1.05));
@@ -608,7 +797,6 @@ function solveCurrentRoom(centerAfter = false) {
       }
     }
 
-    // Удерживаем базовый луч 0->1 от вращения
     if (anchor1 === 1 && !r.pts[1].fixed) {
       const d01 = dist(r.pts[0], r.pts[1]);
       r.pts[1].x = r.pts[0].x + Math.cos(dirAngle) * d01;
@@ -627,7 +815,6 @@ function solveCurrentRoom(centerAfter = false) {
   render();
 }
 
-// Расчет фактических отклонений (дельт) на всех измеренных стенах и диагоналях
 function evaluateRoomErrors(r) {
   state.badEdges = {};
   state.maxAbsError = 0;
@@ -637,7 +824,7 @@ function evaluateRoomErrors(r) {
   const checkEdge = (i, j, targetL, labelPrefix) => {
     const k = edgeKey(i, j);
     const actualL = dist(r.pts[i], r.pts[j]);
-    const delta = actualL - targetL; // + значит растянулось, - значит сжалось
+    const delta = actualL - targetL;
     const absD = Math.abs(delta);
     if (absD > state.maxAbsError) state.maxAbsError = absD;
     if (absD > TOLERANCE_MM) {
@@ -661,7 +848,7 @@ function evaluateRoomErrors(r) {
   });
 }
 
-// =================== СТАТУС И ИНДИКАЦИЯ ОШИБОК ===================
+// =================== СТАТУС И ИНДИКАЦИЯ ===================
 
 function updateStatus() {
   const r = activeRoom();
@@ -774,7 +961,7 @@ function attachNewRoomOnWall(wallIdxA, wallIdxB) {
     "Введите предварительную толщину стены между помещениями (мм):",
     "120",
     (valStr) => {
-      const thickness = parseFloat(valStr);
+      const thickness = parseDistanceInput(valStr);
       if (isNaN(thickness) || thickness < 0) return true;
 
       const r = activeRoom();
@@ -816,7 +1003,7 @@ function attachNewRoomOnWall(wallIdxA, wallIdxB) {
   );
 }
 
-// =================== МОДАЛЬНОЕ ОКНО С ПРОВЕРКОЙ ОШИБОК ===================
+// =================== МОДАЛЬНОЕ ОКНО ===================
 
 let modalCallback = null;
 function openModal(title, desc, defaultValue, onSave) {
@@ -989,6 +1176,7 @@ function handleTap(sx, sy) {
         const isAdjacent = (Math.abs(vA - vB) === 1) || (vA === 0 && vB === N - 1) || (vB === 0 && vA === N - 1);
         const curDist = Math.round(dist(r.pts[vA], r.pts[vB]));
 
+        state.activeTargetEdge = { i: vA, j: vB, isWall: isAdjacent };
         if (isAdjacent) {
           promptWallLength(r, vA, vB, curDist);
         } else {
@@ -1003,18 +1191,21 @@ function handleTap(sx, sy) {
     if (hitWall) {
       state.selectedVertex = null;
       const [i, j] = hitWall;
+      state.activeTargetEdge = { i, j, isWall: true };
       const curDist = Math.round(dist(r.pts[i], r.pts[j]));
       promptWallLength(r, i, j, curDist);
+      render();
       return;
     }
 
-    // Проверка клика по уже существующей диагонали для быстрого редактирования
     const hitDiag = findHitDiag(r, sx, sy);
     if (hitDiag) {
       state.selectedVertex = null;
       const [i, j] = hitDiag;
+      state.activeTargetEdge = { i, j, isWall: false };
       const curDist = Math.round(dist(r.pts[i], r.pts[j]));
       promptDiagLength(r, i, j, curDist);
+      render();
       return;
     }
 
@@ -1028,15 +1219,16 @@ function promptWallLength(r, i, j, curDist) {
   const existing = r.walls[k] !== undefined ? r.walls[k] : curDist;
   openModal(
     `Стена №${i + 1} — №${j + 1}`,
-    "Введите длину стены (мм). Оставьте пустым для сброса:",
+    "Введите длину (мм) или нажмите кнопку на Bosch GLM 50C:",
     existing,
     (valStr) => {
       if (valStr.trim() === '') {
         delete r.walls[k];
         solveCurrentRoom(false);
+        autoSelectNextTarget();
         return true;
       }
-      const v = parseFloat(valStr);
+      const v = parseDistanceInput(valStr);
       if (isNaN(v) || v <= 0) {
         showModalError("Введите положительное число в миллиметрах.");
         return false;
@@ -1044,10 +1236,11 @@ function promptWallLength(r, i, j, curDist) {
       const errMsg = validateMeasurement(r, i, j, v);
       if (errMsg) {
         showModalError(errMsg);
-        return false; // Блокируем закрытие окна при грубой геометрической ошибке
+        return false;
       }
       r.walls[k] = v;
-      solveCurrentRoom(Object.keys(r.walls).length === 1); // Центрируем при первом размере
+      solveCurrentRoom(Object.keys(r.walls).length === 1);
+      autoSelectNextTarget();
       return true;
     }
   );
@@ -1058,15 +1251,16 @@ function promptDiagLength(r, i, j, curDist) {
   const existing = r.diags[k] !== undefined ? r.diags[k] : curDist;
   openModal(
     `Диагональ №${i + 1} — №${j + 1}`,
-    "Введите длину диагонали (мм). Оставьте пустым для удаления:",
+    "Введите длину диагонали (мм) или стреляйте из GLM 50C:",
     existing,
     (valStr) => {
       if (valStr.trim() === '') {
         delete r.diags[k];
         solveCurrentRoom(false);
+        autoSelectNextTarget();
         return true;
       }
-      const v = parseFloat(valStr);
+      const v = parseDistanceInput(valStr);
       if (isNaN(v) || v <= 0) {
         showModalError("Введите положительное число в миллиметрах.");
         return false;
@@ -1078,6 +1272,7 @@ function promptDiagLength(r, i, j, curDist) {
       }
       r.diags[k] = v;
       solveCurrentRoom(false);
+      autoSelectNextTarget();
       return true;
     }
   );
@@ -1128,7 +1323,7 @@ function pointToSegmentDist(px, py, x1, y1, x2, y2) {
   return Math.hypot(px - (x1 + t * vx), py - (y1 + t * vy));
 }
 
-// =================== ОТРИСОВКА С ОТОБРАЖЕНИЕМ ДЕЛЬТ ===================
+// =================== ОТРИСОВКА С ПРИЦЕЛОМ ДАЛЬНОМЕРА ===================
 
 function formatEdgeLabel(prefix, enteredVal, actualVal) {
   const diff = Math.round(actualVal - enteredVal);
@@ -1217,18 +1412,24 @@ function drawRoom(r, isActive) {
       const [ri, rj] = state.recommendedDiag;
       const p1 = worldToScreen(r.pts[ri].x, r.pts[ri].y);
       const p2 = worldToScreen(r.pts[rj].x, r.pts[rj].y);
+      const isTargeted = state.activeTargetEdge && !state.activeTargetEdge.isWall &&
+                         edgeKey(state.activeTargetEdge.i, state.activeTargetEdge.j) === edgeKey(ri, rj);
 
       ctx.save();
       ctx.setLineDash([4, 6]);
       ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = isTargeted ? 3.2 : 2;
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
       ctx.stroke();
       ctx.restore();
 
-      drawLabel((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, `Замерьте диаг. ${ri+1}-${rj+1}`, '#fef08a', '#78350f');
+      drawLabel(
+        (p1.x + p2.x) / 2, (p1.y + p2.y) / 2,
+        isTargeted ? `🎯 Замерьте диаг. ${ri+1}-${rj+1}` : `Замерьте диаг. ${ri+1}-${rj+1}`,
+        '#fef08a', '#78350f'
+      );
     }
   }
 
@@ -1242,6 +1443,8 @@ function drawRoom(r, isActive) {
     const hasMeasured = r.walls[k] !== undefined;
     const actualD = dist(r.pts[i], r.pts[j]);
     const isBad = isActive && state.badEdges[k] !== undefined;
+    const isTargeted = isActive && state.mode === 'measure' && state.activeTargetEdge &&
+                       state.activeTargetEdge.isWall && edgeKey(state.activeTargetEdge.i, state.activeTargetEdge.j) === k;
 
     ctx.beginPath();
     ctx.moveTo(p1.x, p1.y);
@@ -1252,6 +1455,9 @@ function drawRoom(r, isActive) {
     } else if (isBad) {
       ctx.strokeStyle = '#ef4444';
       ctx.lineWidth = 4;
+    } else if (isTargeted) {
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 4.5;
     } else {
       ctx.strokeStyle = hasMeasured ? '#22c55e' : '#38bdf8';
       ctx.lineWidth = hasMeasured ? 3.5 : 2.5;
@@ -1260,15 +1466,16 @@ function drawRoom(r, isActive) {
 
     const mx = (p1.x + p2.x) / 2;
     const my = (p1.y + p2.y) / 2;
+    const prefix = isTargeted ? '🎯 ' : '';
     const valText = hasMeasured
-      ? formatEdgeLabel('', r.walls[k], actualD)
-      : `~${Math.round(actualD)}`;
+      ? formatEdgeLabel(prefix, r.walls[k], actualD)
+      : `${prefix}~${Math.round(actualD)}`;
 
     if (isActive) {
       drawLabel(
         mx, my, valText,
-        isBad ? '#fecaca' : (hasMeasured ? '#bbf7d0' : '#bae6fd'),
-        isBad ? '#991b1b' : (hasMeasured ? '#14532d' : '#0c4a6e')
+        isBad ? '#fecaca' : (isTargeted ? '#fef08a' : (hasMeasured ? '#bbf7d0' : '#bae6fd')),
+        isBad ? '#991b1b' : (isTargeted ? '#78350f' : (hasMeasured ? '#14532d' : '#0c4a6e'))
       );
     } else if (hasMeasured) {
       drawLabel(mx, my, `${Math.round(actualD)}`, '#94a3b8', '#1e293b');
